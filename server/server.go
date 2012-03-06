@@ -21,8 +21,6 @@ type TxStat struct {
 	Name      []string
 	Length    []int64
 	Checksum  []string
-	State     int
-	LeanState int
 }
 
 var (
@@ -37,9 +35,8 @@ func InitFlags() {
 func ClientHandler(connx *net.TCPConn) {
 
 	var stats *TxStat
-	stats = new(TxStat)
-	stats.State = kStateSetup
-	stats.LeanState = kStateConfig
+	var state int = kStateSetup
+	var leanState int = kStateConfig
 
 	temp := make([]string, 256)
 
@@ -49,11 +46,10 @@ func ClientHandler(connx *net.TCPConn) {
 	defer connx.Close()
 
 	for {
-		if stats.State == kStateSetup {
+		if state == kStateSetup {
 			stats = new(TxStat)
-			stats.State = kStateConfig
-			stats.LeanState = kStateConfig
-		} else if stats.State == kStateConfig {
+			state = kStateConfig
+		} else if state == kStateConfig {
 			line, prefix, error := reader.ReadLine()
 			if error != nil {
 				fmt.Println("Connection terminated.")
@@ -66,28 +62,38 @@ func ClientHandler(connx *net.TCPConn) {
 			toParse := strings.Join(temp, "")
 			temp = make([]string, 256)
 
-			if toParse == "EOT" {
-				stats.State = kStateTeardown
+			if toParse == "BYE" {
+				state = kStateTeardown
 			} else if toParse == "" {
-				stats.State = stats.LeanState
+				state = leanState
 			} else if strings.HasPrefix(toParse, "GET ") {
-				if stats.LeanState == kStatePutMode {
+				if leanState == kStatePutMode {
 					fmt.Println("Connection terminated. Attempted GET in PUT mode.")
-					return
+					writer.WriteString("EPICFAIL Get & Put cannot be done in the same request\n")
+					writer.Flush()
+
+					state = kStateSetup
+					leanState = kStateConfig
+					continue
 				}
 				stats.Name = append(stats.Name, toParse[4:])
-				stats.LeanState = kStateGetMode
+				leanState = kStateGetMode
 			} else if strings.HasPrefix(toParse, "PUT ") {
-				if stats.LeanState == kStateGetMode {
+				if leanState == kStateGetMode {
 					fmt.Println("Connection terminated. Attempted PUT in GET mode.")
-					return
+					writer.WriteString("EPICFAIL Get & Put cannot be done in the same request\n")
+					writer.Flush()
+
+					state = kStateSetup
+					leanState = kStateConfig
+					continue
 				}
 				stats.Name = append(stats.Name, toParse[4:])
-				stats.LeanState = kStatePutMode
+				leanState = kStatePutMode
 			} else {
 				fmt.Println("Command Error, ignoring line.")
 			}
-		} else if stats.State == kStateGetMode {
+		} else if state == kStateGetMode {
 			for i := 0; i < len(stats.Name); i++ {
 				writer.WriteString("OK " + stats.Name[i] + "\n")
 				writer.WriteString("LENGTH troll\n")
@@ -96,11 +102,14 @@ func ClientHandler(connx *net.TCPConn) {
 				writer.WriteString("CHECKSUM troll\n\n")
 				writer.Flush()
 			}
-			stats.State = kStateSetup
-		} else if stats.State == kStatePutMode {
+			state = kStateSetup
+			leanState = kStateConfig
+		} else if state == kStatePutMode {
 			// handle file tx
 			fmt.Println("PUT MODE ACTIVATED!")
-		} else if stats.State == kStateTeardown {
+			state = kStateSetup
+			leanState = kStateConfig
+		} else if state == kStateTeardown {
 			fmt.Println("Connection closed by client.")
 			return
 		}
