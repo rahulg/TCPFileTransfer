@@ -4,9 +4,13 @@ import (
 	"fmt"
 	"flag"
 	//	"io"
+	"os"
 	"strings"
+	"strconv"
 	"bufio"
 	"net"
+	"crypto/md5"
+	"hash"
 )
 
 const (
@@ -18,9 +22,9 @@ const (
 )
 
 type TxStat struct {
-	Name      []string
-	Length    []int64
-	Checksum  []string
+	Name     []string
+	Length   []int64
+	Checksum []string
 }
 
 var (
@@ -28,7 +32,7 @@ var (
 )
 
 func InitFlags() {
-	flag.StringVar(&Port, "p", "65500", "Port number to listen on")
+	flag.StringVar(&Port, "p", "65500", "Port number to listen on.")
 	flag.Parse()
 }
 
@@ -96,11 +100,39 @@ func ClientHandler(connx *net.TCPConn) {
 			}
 		case kStateGetMode:
 			for i := 0; i < len(stats.Name); i++ {
+				fileInfo, error := os.Stat(stats.Name[i])
+				if error != nil || !fileInfo.IsRegular() {
+					fmt.Println("Failed to stat file " + stats.Name[i])
+					writer.WriteString("NOTFOUND " + stats.Name[i] + "\n\n")
+					writer.Flush()
+					continue
+				}
+
+				file, error := os.Open(stats.Name[i])
+				if error != nil {
+					fmt.Println("Failed to open file " + stats.Name[i])
+					writer.WriteString("READERR " + stats.Name[i] + "\n\n")
+					writer.Flush()
+					continue
+				}
+				defer file.Close()
+
+				var checksum hash.Hash = md5.New()
+
 				writer.WriteString("OK " + stats.Name[i] + "\n")
-				writer.WriteString("LENGTH troll\n")
-				// send file
-				writer.WriteString("Here is your file.\n")
-				writer.WriteString("CHECKSUM troll\n\n")
+				writer.WriteString("LENGTH " + strconv.Itoa64(fileInfo.Size) + "\n")
+
+				buffer := make([]byte, 1024)
+				troll := 0
+				readBytes, error := file.Read(buffer)
+				checksum.Write(buffer)
+				for error == nil {
+					troll += readBytes
+					writer.WriteString(string(buffer[:readBytes]))
+					readBytes, error = file.Read(buffer)
+				}
+				fmt.Println("Sent", troll, "bytes from file", stats.Name[i]+".")
+				writer.WriteString("CHECKSUM " + fmt.Sprintf("%x", checksum.Sum()) + "\n\n")
 				writer.Flush()
 			}
 			state = kStateSetup
