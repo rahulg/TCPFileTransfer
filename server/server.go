@@ -46,10 +46,11 @@ func ClientHandler(connx *net.TCPConn) {
 	defer connx.Close()
 
 	for {
-		if state == kStateSetup {
+		switch state {
+		case kStateSetup:
 			stats = new(TxStat)
 			state = kStateConfig
-		} else if state == kStateConfig {
+		case kStateConfig:
 			line, prefix, error := reader.ReadLine()
 			if error != nil {
 				fmt.Println("Connection terminated.")
@@ -93,7 +94,7 @@ func ClientHandler(connx *net.TCPConn) {
 			} else {
 				fmt.Println("Command Error, ignoring line.")
 			}
-		} else if state == kStateGetMode {
+		case kStateGetMode:
 			for i := 0; i < len(stats.Name); i++ {
 				writer.WriteString("OK " + stats.Name[i] + "\n")
 				writer.WriteString("LENGTH troll\n")
@@ -104,12 +105,12 @@ func ClientHandler(connx *net.TCPConn) {
 			}
 			state = kStateSetup
 			leanState = kStateConfig
-		} else if state == kStatePutMode {
+		case kStatePutMode:
 			// handle file tx
 			fmt.Println("PUT MODE ACTIVATED!")
 			state = kStateSetup
 			leanState = kStateConfig
-		} else if state == kStateTeardown {
+		case kStateTeardown:
 			fmt.Println("Connection closed by client.")
 			return
 		}
