@@ -1,0 +1,60 @@
+Request:
+
+GET <fname>
+EOT
+
+Response:
+
+OK <fname>
+LENGTH <length>
+
+<body>
+
+CHECKSUM <md5>
+EOT
+
+=====================
+
+Request:
+
+GET <fname>
+GET <fname2>
+GET <fname3>
+EOT
+
+Response:
+
+OK <fname>
+LENGTH <length>
+
+<body>
+
+CHECKSUM <md5>
+
+OK <fname2>
+LENGTH <length2>
+
+<body2>
+
+CHECKSUM <md5>
+…
+EOT
+
+=====================
+
+Request:
+
+PUT <fname>
+LENGTH <length>
+
+<body>
+
+CHECKSUM <md5>
+EOT
+
+Response:
+
+OK <fname>
+EOT
+
+=====================
