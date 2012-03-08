@@ -1,3 +1,4 @@
 ftclient
 ftserver
 *.6
+testbed/*

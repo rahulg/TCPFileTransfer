@@ -18,6 +18,7 @@ const (
 	kStateConfig
 	kStateGetMode
 	kStatePutMode
+	kStatePutReceive
 	kStateTeardown
 )
 
@@ -41,6 +42,7 @@ func ClientHandler(connx *net.TCPConn) {
 	var stats *TxStat
 	var state int = kStateSetup
 	var leanState int = kStateConfig
+	var rxLength int64
 
 	temp := make([]string, 256)
 
@@ -94,9 +96,13 @@ func ClientHandler(connx *net.TCPConn) {
 					continue
 				}
 				stats.Name = append(stats.Name, toParse[4:])
+				rxLength = 0
+				state = kStatePutMode
 				leanState = kStatePutMode
 			} else {
 				fmt.Println("Command Error, ignoring line.")
+				state = kStateSetup
+				leanState = kStateConfig
 			}
 		case kStateGetMode:
 			for i := 0; i < len(stats.Name); i++ {
@@ -125,9 +131,9 @@ func ClientHandler(connx *net.TCPConn) {
 				buffer := make([]byte, 1024)
 				troll := 0
 				readBytes, error := file.Read(buffer)
-				checksum.Write(buffer)
 				for error == nil {
 					troll += readBytes
+					checksum.Write(buffer[:readBytes])
 					writer.WriteString(string(buffer[:readBytes]))
 					readBytes, error = file.Read(buffer)
 				}
@@ -138,10 +144,96 @@ func ClientHandler(connx *net.TCPConn) {
 			state = kStateSetup
 			leanState = kStateConfig
 		case kStatePutMode:
-			// handle file tx
-			fmt.Println("PUT MODE ACTIVATED!")
-			state = kStateSetup
-			leanState = kStateConfig
+			line, prefix, error := reader.ReadLine()
+			if error != nil {
+				fmt.Println("File PUT failed.")
+				writer.WriteString("FAIL " + stats.Name[0] + "\n")
+				return
+			}
+			temp = append(temp, string(line))
+			if prefix {
+				continue
+			}
+			toParse := strings.Join(temp, "")
+			temp = make([]string, 256)
+			if strings.HasPrefix(toParse, "LENGTH ") {
+				rxLength, error = strconv.Atoi64(toParse[7:])
+			} else if toParse == "" && rxLength > 0 {
+				state = kStatePutReceive
+			}
+		case kStatePutReceive:
+			var count int64
+			var checksum hash.Hash = md5.New()
+			buffer := make([]byte, 1024)
+
+			file, error := os.Create(stats.Name[0])
+			if error != nil {
+				fmt.Println("Failed to open file " + stats.Name[0])
+				writer.WriteString("WRERR " + stats.Name[0] + "\n")
+				writer.Flush()
+				state = kStateSetup
+				leanState = kStateConfig
+			}
+			defer file.Close()
+
+			for count < rxLength-1024 {
+				readBytes, error := reader.Read(buffer)
+				if error != nil {
+					fmt.Println("Stream read error.")
+					writer.WriteString("RECVERR " + stats.Name[0] + "\n")
+					return
+				}
+				count += int64(readBytes)
+				checksum.Write(buffer[:readBytes])
+				file.Write(buffer[:readBytes])
+			}
+
+			for count < rxLength {
+				buf := make([]byte, 1)
+				readBytes, error := reader.Read(buf)
+				if error != nil {
+					fmt.Println("Stream read error.")
+					writer.WriteString("RECVERR " + stats.Name[0] + "\n")
+					return
+				}
+				count += int64(readBytes)
+				checksum.Write(buf)
+				file.Write(buf)
+			}
+
+			for {
+				// get checksum!
+				line, prefix, error := reader.ReadLine()
+				if error != nil || prefix {
+					fmt.Println("Stream read error.")
+					writer.WriteString("RECVERR " + stats.Name[0] + "\n")
+					return
+				}
+				toParse := string(line)
+				var csum string
+				if strings.HasPrefix(toParse, "CHECKSUM ") {
+					csum = toParse[9:]
+				} else {
+					continue
+				}
+
+				if csum != fmt.Sprintf("%x", checksum.Sum()) {
+					fmt.Println("Hash mismatch: sender claimed " + csum + ", got " + fmt.Sprintf("%x", checksum.Sum()) + ".")
+					writer.WriteString("HASHERR " + stats.Name[0] + "\n")
+					writer.Flush()
+					state = kStateSetup
+					leanState = kStateConfig
+					break
+				}
+
+				fmt.Println("Wrote " + strconv.Itoa64(count) + " bytes to file " + stats.Name[0])
+				writer.WriteString("RECV " + stats.Name[0] + "\n")
+				writer.Flush()
+
+				state = kStateSetup
+				leanState = kStateConfig
+				break
+			}
 		case kStateTeardown:
 			fmt.Println("Connection closed by client.")
 			return

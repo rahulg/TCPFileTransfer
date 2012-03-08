@@ -7,7 +7,7 @@ GOLFLAGS=
 FMTFLAGS=-w
 
 SRC=$(wildcard *.go)
-PRODUCT=../ftclient
+PRODUCT=../testbed/ftclient
 
 .PHONY: all clean fmt
 
