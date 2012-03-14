@@ -89,7 +89,12 @@ func ClientHandler(connx *net.TCPConn) {
 					leanState = kStateConfig
 					continue
 				}
-				filenames = append(filenames, toParse[4:])
+				temp_str := toParse[4:]
+				loc := strings.LastIndex(temp_str, "/")
+				if loc > -1 {
+					temp_str = temp_str[loc+1:]
+				}
+				filenames = append(filenames, temp_str)
 				rxLength = 0
 				state = kStatePutMode
 				leanState = kStatePutMode
@@ -162,11 +167,12 @@ func ClientHandler(connx *net.TCPConn) {
 
 			file, error := os.Create(filenames[0])
 			if error != nil {
-				fmt.Println("Failed to open file " + filenames[0])
+				fmt.Println("Failed to create file " + filenames[0])
 				writer.WriteString("WRERR " + filenames[0] + "\n")
 				writer.Flush()
 				state = kStateSetup
 				leanState = kStateConfig
+				continue
 			}
 			defer file.Close()
 
