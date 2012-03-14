@@ -1,2 +1,3 @@
-*.6
 testbed/*
+server/server
+client/client

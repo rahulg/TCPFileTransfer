@@ -1,16 +1,16 @@
 package main
 
 import (
-	"fmt"
 	"flag"
+	"fmt"
 	//	"io"
-	"os"
-	"strings"
-	"strconv"
 	"bufio"
-	"net"
 	"crypto/md5"
 	"hash"
+	"net"
+	"os"
+	"strconv"
+	"strings"
 )
 
 const (
@@ -107,7 +107,7 @@ func ClientHandler(connx *net.TCPConn) {
 		case kStateGetMode:
 			for i := 0; i < len(stats.Name); i++ {
 				fileInfo, error := os.Stat(stats.Name[i])
-				if error != nil || !fileInfo.IsRegular() {
+				if error != nil || fileInfo.IsDir() {
 					fmt.Println("Failed to stat file " + stats.Name[i])
 					writer.WriteString("NOTFOUND " + stats.Name[i] + "\n\n")
 					writer.Flush()
@@ -126,7 +126,7 @@ func ClientHandler(connx *net.TCPConn) {
 				var checksum hash.Hash = md5.New()
 
 				writer.WriteString("OK " + stats.Name[i] + "\n")
-				writer.WriteString("LENGTH " + strconv.Itoa64(fileInfo.Size) + "\n")
+				writer.WriteString("LENGTH " + strconv.FormatInt(fileInfo.Size(), 10) + "\n\n")
 
 				buffer := make([]byte, 1024)
 				troll := 0
@@ -138,7 +138,7 @@ func ClientHandler(connx *net.TCPConn) {
 					readBytes, error = file.Read(buffer)
 				}
 				fmt.Println("Sent", troll, "bytes from file", stats.Name[i]+".")
-				writer.WriteString("CHECKSUM " + fmt.Sprintf("%x", checksum.Sum()) + "\n\n")
+				writer.WriteString("\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
 				writer.Flush()
 			}
 			state = kStateSetup
@@ -157,7 +157,7 @@ func ClientHandler(connx *net.TCPConn) {
 			toParse := strings.Join(temp, "")
 			temp = make([]string, 256)
 			if strings.HasPrefix(toParse, "LENGTH ") {
-				rxLength, error = strconv.Atoi64(toParse[7:])
+				rxLength, error = strconv.ParseInt(toParse[7:], 10, 64)
 			} else if toParse == "" && rxLength > 0 {
 				state = kStatePutReceive
 			}
@@ -217,8 +217,8 @@ func ClientHandler(connx *net.TCPConn) {
 					continue
 				}
 
-				if csum != fmt.Sprintf("%x", checksum.Sum()) {
-					fmt.Println("Hash mismatch: sender claimed " + csum + ", got " + fmt.Sprintf("%x", checksum.Sum()) + ".")
+				if csum != fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) {
+					fmt.Println("Hash mismatch: sender claimed " + csum + ", got " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + ".")
 					writer.WriteString("HASHERR " + stats.Name[0] + "\n")
 					writer.Flush()
 					state = kStateSetup
@@ -226,7 +226,7 @@ func ClientHandler(connx *net.TCPConn) {
 					break
 				}
 
-				fmt.Println("Wrote " + strconv.Itoa64(count) + " bytes to file " + stats.Name[0])
+				fmt.Println("Wrote " + strconv.FormatInt(count, 10) + " bytes to file " + stats.Name[0])
 				writer.WriteString("RECV " + stats.Name[0] + "\n")
 				writer.Flush()
 
