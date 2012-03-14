@@ -22,12 +22,6 @@ const (
 	kStateTeardown
 )
 
-type TxStat struct {
-	Name     []string
-	Length   []int64
-	Checksum []string
-}
-
 var (
 	Port string
 )
@@ -39,7 +33,7 @@ func InitFlags() {
 
 func ClientHandler(connx *net.TCPConn) {
 
-	var stats *TxStat
+	var filenames []string
 	var state int = kStateSetup
 	var leanState int = kStateConfig
 	var rxLength int64
@@ -54,7 +48,7 @@ func ClientHandler(connx *net.TCPConn) {
 	for {
 		switch state {
 		case kStateSetup:
-			stats = new(TxStat)
+			filenames = append(make([]string, 0))
 			state = kStateConfig
 		case kStateConfig:
 			line, prefix, error := reader.ReadLine()
@@ -83,7 +77,7 @@ func ClientHandler(connx *net.TCPConn) {
 					leanState = kStateConfig
 					continue
 				}
-				stats.Name = append(stats.Name, toParse[4:])
+				filenames = append(filenames, toParse[4:])
 				leanState = kStateGetMode
 			} else if strings.HasPrefix(toParse, "PUT ") {
 				if leanState == kStateGetMode {
@@ -95,7 +89,7 @@ func ClientHandler(connx *net.TCPConn) {
 					leanState = kStateConfig
 					continue
 				}
-				stats.Name = append(stats.Name, toParse[4:])
+				filenames = append(filenames, toParse[4:])
 				rxLength = 0
 				state = kStatePutMode
 				leanState = kStatePutMode
@@ -105,27 +99,26 @@ func ClientHandler(connx *net.TCPConn) {
 				leanState = kStateConfig
 			}
 		case kStateGetMode:
-			for i := 0; i < len(stats.Name); i++ {
-				fileInfo, error := os.Stat(stats.Name[i])
+			for i := 0; i < len(filenames); i++ {
+				fileInfo, error := os.Stat(filenames[i])
 				if error != nil || fileInfo.IsDir() {
-					fmt.Println("Failed to stat file " + stats.Name[i])
-					writer.WriteString("NOTFOUND " + stats.Name[i] + "\n\n")
+					fmt.Println("Failed to stat file " + filenames[i])
+					writer.WriteString("NOTFOUND " + filenames[i] + "\n\n")
 					writer.Flush()
 					continue
 				}
 
-				file, error := os.Open(stats.Name[i])
+				file, error := os.Open(filenames[i])
 				if error != nil {
-					fmt.Println("Failed to open file " + stats.Name[i])
-					writer.WriteString("READERR " + stats.Name[i] + "\n\n")
+					fmt.Println("Failed to open file " + filenames[i])
+					writer.WriteString("READERR " + filenames[i] + "\n\n")
 					writer.Flush()
 					continue
 				}
-				defer file.Close()
 
 				var checksum hash.Hash = md5.New()
 
-				writer.WriteString("OK " + stats.Name[i] + "\n")
+				writer.WriteString("OK " + filenames[i] + "\n")
 				writer.WriteString("LENGTH " + strconv.FormatInt(fileInfo.Size(), 10) + "\n\n")
 
 				buffer := make([]byte, 1024)
@@ -137,8 +130,9 @@ func ClientHandler(connx *net.TCPConn) {
 					writer.WriteString(string(buffer[:readBytes]))
 					readBytes, error = file.Read(buffer)
 				}
-				fmt.Println("Sent", troll, "bytes from file", stats.Name[i]+".")
+				fmt.Println("Sent", troll, "bytes from file", filenames[i]+".")
 				writer.WriteString("\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
+				file.Close()
 				writer.Flush()
 			}
 			state = kStateSetup
@@ -147,7 +141,7 @@ func ClientHandler(connx *net.TCPConn) {
 			line, prefix, error := reader.ReadLine()
 			if error != nil {
 				fmt.Println("File PUT failed.")
-				writer.WriteString("FAIL " + stats.Name[0] + "\n")
+				writer.WriteString("FAIL " + filenames[0] + "\n")
 				return
 			}
 			temp = append(temp, string(line))
@@ -166,10 +160,10 @@ func ClientHandler(connx *net.TCPConn) {
 			var checksum hash.Hash = md5.New()
 			buffer := make([]byte, 1024)
 
-			file, error := os.Create(stats.Name[0])
+			file, error := os.Create(filenames[0])
 			if error != nil {
-				fmt.Println("Failed to open file " + stats.Name[0])
-				writer.WriteString("WRERR " + stats.Name[0] + "\n")
+				fmt.Println("Failed to open file " + filenames[0])
+				writer.WriteString("WRERR " + filenames[0] + "\n")
 				writer.Flush()
 				state = kStateSetup
 				leanState = kStateConfig
@@ -180,7 +174,7 @@ func ClientHandler(connx *net.TCPConn) {
 				readBytes, error := reader.Read(buffer)
 				if error != nil {
 					fmt.Println("Stream read error.")
-					writer.WriteString("RECVERR " + stats.Name[0] + "\n")
+					writer.WriteString("RECVERR " + filenames[0] + "\n")
 					return
 				}
 				count += int64(readBytes)
@@ -193,7 +187,7 @@ func ClientHandler(connx *net.TCPConn) {
 				readBytes, error := reader.Read(buf)
 				if error != nil {
 					fmt.Println("Stream read error.")
-					writer.WriteString("RECVERR " + stats.Name[0] + "\n")
+					writer.WriteString("RECVERR " + filenames[0] + "\n")
 					return
 				}
 				count += int64(readBytes)
@@ -206,7 +200,7 @@ func ClientHandler(connx *net.TCPConn) {
 				line, prefix, error := reader.ReadLine()
 				if error != nil || prefix {
 					fmt.Println("Stream read error.")
-					writer.WriteString("RECVERR " + stats.Name[0] + "\n")
+					writer.WriteString("RECVERR " + filenames[0] + "\n")
 					return
 				}
 				toParse := string(line)
@@ -219,15 +213,15 @@ func ClientHandler(connx *net.TCPConn) {
 
 				if csum != fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) {
 					fmt.Println("Hash mismatch: sender claimed " + csum + ", got " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + ".")
-					writer.WriteString("HASHERR " + stats.Name[0] + "\n")
+					writer.WriteString("HASHERR " + filenames[0] + "\n")
 					writer.Flush()
 					state = kStateSetup
 					leanState = kStateConfig
 					break
 				}
 
-				fmt.Println("Wrote " + strconv.FormatInt(count, 10) + " bytes to file " + stats.Name[0])
-				writer.WriteString("RECV " + stats.Name[0] + "\n")
+				fmt.Println("Wrote " + strconv.FormatInt(count, 10) + " bytes to file " + filenames[0])
+				writer.WriteString("RECV " + filenames[0] + "\n")
 				writer.Flush()
 
 				state = kStateSetup
@@ -265,8 +259,8 @@ func main() {
 		connx, error := tcpListener.AcceptTCP()
 
 		if error != nil {
-			fmt.Println("Accept Error")
-			return
+			fmt.Println("Accept Error:", error)
+			continue
 		}
 
 		go ClientHandler(connx)
