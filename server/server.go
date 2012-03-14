@@ -181,7 +181,7 @@ func ClientHandler(connx *net.TCPConn) {
 				}
 
 				fmt.Println("Sent", sentBytes, "bytes from file", filenames[i]+".")
-				writer.WriteString("\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
+				writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
 				file.Close()
 				writer.Flush()
 
@@ -263,12 +263,12 @@ func ClientHandler(connx *net.TCPConn) {
 					return
 				}
 
-				temp = append(temp, line)
+				temp = append(temp, string(line))
 				if prefix {
 					continue
 				}
 
-				toParse = strings.Join(temp, "")
+				toParse := strings.Join(temp, "")
 				temp = make([]string, 256)
 
 				var inputChecksum string
