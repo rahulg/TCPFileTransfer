@@ -1,12 +1,12 @@
 package main
 
 import (
-	"flag"
-	"fmt"
-	//	"io"
 	"bufio"
 	"crypto/md5"
+	"flag"
+	"fmt"
 	"hash"
+	"io/ioutil"
 	"net"
 	"os"
 	"strconv"
@@ -27,7 +27,7 @@ var (
 )
 
 func InitFlags() {
-	flag.StringVar(&Port, "p", "65500", "Port number to listen on.")
+	flag.StringVar(&Port, "port", "65500", "Port number to listen on.")
 	flag.Parse()
 }
 
@@ -145,45 +145,87 @@ func ClientHandler(connx *net.TCPConn) {
 
 			for i := 0; i < len(filenames); i++ {
 
-				fileInfo, error := os.Stat(filenames[i])
-				if error != nil || fileInfo.IsDir() {
-					fmt.Println("Stat", filenames[i], ":", error)
-					writer.WriteString("NOTFOUND " + filenames[i] + "\n\n")
+				if filenames[i] == "filelist.txt" || filenames[i] == "" {
+
+					localFiles := make([]string, 0)
+					localFilesInfo, error := ioutil.ReadDir("files")
+					if error != nil {
+						fmt.Println("Directory listing error:", error)
+						writer.WriteString("NOTFOUND " + filenames[i] + "\n\n")
+						continue
+					}
+
+					for i := 0; i < len(localFilesInfo); i++ {
+						theFileName := localFilesInfo[i].Name()
+						if !strings.HasPrefix(theFileName, ".") {
+							localFiles = append(localFiles, theFileName)
+						}
+					}
+
+					var totalSize int64 = 0
+					for i := 0; i < len(localFiles); i++ {
+						totalSize += int64(len(localFiles[i]) + 1)
+					}
+
+					var checksum hash.Hash = md5.New()
+
+					writer.WriteString("OK " + filenames[i] + "\n")
+					writer.WriteString("LENGTH " + strconv.FormatInt(totalSize, 10) + "\n\n")
+
+					for i := 0; i < len(localFiles); i++ {
+						checksum.Write([]byte(localFiles[i] + "\n"))
+						writer.WriteString(localFiles[i] + "\n")
+					}
+
+					fmt.Println("Sent", totalSize, "bytes for index.")
+					writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
 					writer.Flush()
-					continue
-				}
 
-				file, error := os.Open(filenames[i])
-				if error != nil {
-					fmt.Println("Open", filenames[i], ":", error)
-					writer.WriteString("READERR " + filenames[i] + "\n\n")
+				} else {
+
+					localFile := "files/" + filenames[i]
+
+					fileInfo, error := os.Stat(localFile)
+					if error != nil || fileInfo.IsDir() {
+						fmt.Println("Stat", localFile, ":", error)
+						writer.WriteString("NOTFOUND " + filenames[i] + "\n\n")
+						writer.Flush()
+						continue
+					}
+
+					file, error := os.Open(localFile)
+					if error != nil {
+						fmt.Println("Open", localFile, ":", error)
+						writer.WriteString("READERR " + filenames[i] + "\n\n")
+						writer.Flush()
+						continue
+					}
+
+					var checksum hash.Hash = md5.New()
+
+					writer.WriteString("OK " + filenames[i] + "\n")
+					writer.WriteString("LENGTH " + strconv.FormatInt(fileInfo.Size(), 10) + "\n\n")
+
+					buffer := make([]byte, 1024)
+					sentBytes := 0
+					readBytes, error := file.Read(buffer)
+					for error == nil {
+
+						sentBytes += readBytes
+
+						checksum.Write(buffer[:readBytes])
+						writer.WriteString(string(buffer[:readBytes]))
+
+						readBytes, error = file.Read(buffer)
+
+					}
+
+					fmt.Println("Sent", sentBytes, "bytes from file", localFile+".")
+					writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
+					file.Close()
 					writer.Flush()
-					continue
-				}
-
-				var checksum hash.Hash = md5.New()
-
-				writer.WriteString("OK " + filenames[i] + "\n")
-				writer.WriteString("LENGTH " + strconv.FormatInt(fileInfo.Size(), 10) + "\n\n")
-
-				buffer := make([]byte, 1024)
-				sentBytes := 0
-				readBytes, error := file.Read(buffer)
-				for error == nil {
-
-					sentBytes += readBytes
-
-					checksum.Write(buffer[:readBytes])
-					writer.WriteString(string(buffer[:readBytes]))
-
-					readBytes, error = file.Read(buffer)
 
 				}
-
-				fmt.Println("Sent", sentBytes, "bytes from file", filenames[i]+".")
-				writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
-				file.Close()
-				writer.Flush()
 
 			}
 
