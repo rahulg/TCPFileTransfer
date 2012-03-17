@@ -268,10 +268,12 @@ func ClientHandler(connx *net.TCPConn) {
 			var checksum hash.Hash = md5.New()
 			buffer := make([]byte, 1024)
 
-			file, error := os.Create(filenames[0])
+			localFile := "files/" + filenames[0]
+
+			file, error := os.Create(localFile)
 			if error != nil {
 
-				fmt.Println("Create", filenames[0], ":", error)
+				fmt.Println("Create", localFile, ":", error)
 				writer.WriteString("WRERR " + filenames[0] + "\n\n")
 				writer.Flush()
 
@@ -332,7 +334,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 				}
 
-				fmt.Println("Wrote", strconv.FormatInt(count, 10), "bytes to file", filenames[0]+".")
+				fmt.Println("Wrote", strconv.FormatInt(count, 10), "bytes to file", localFile+".")
 				writer.WriteString("RECV " + filenames[0] + "\n")
 				writer.Flush()
 
