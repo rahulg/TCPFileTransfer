@@ -120,6 +120,11 @@ func ClientHandler(connx *net.TCPConn) {
 						touched = true
 					}
 
+					if toParse[:2] == "./" {
+						toParse = toParse[2:]
+						touched = true
+					}
+
 					if toParse[:3] == "../" {
 						toParse = toParse[3:]
 						touched = true
