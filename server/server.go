@@ -38,7 +38,7 @@ func ClientHandler(connx *net.TCPConn) {
 	var leanState int = kStateConfig
 	var rxLength int64
 
-	temp := make([]string, 256)
+	temp := make([]string, 0)
 
 	reader := bufio.NewReader(connx)
 	writer := bufio.NewWriter(connx)
@@ -66,21 +66,24 @@ func ClientHandler(connx *net.TCPConn) {
 			}
 
 			toParse := strings.Join(temp, "")
-			temp = make([]string, 256)
+			input := strings.Split(toParse, " ")
+			temp = make([]string, 0)
 
-			if toParse == "BYE" {
+			switch input[0] {
+
+			case "BYE":
 
 				state = kStateTeardown
 
-			} else if toParse == "" {
+			case "":
 
 				state = leanState
 
-			} else if strings.HasPrefix(toParse, "GET ") {
+			case "GET":
 
-				if leanState == kStatePutMode {
+				if leanState == kStatePutMode || len(input) < 2 {
 
-					fmt.Println("Connection terminated. Attempted GET in PUT mode.")
+					fmt.Println("Request Error:", input)
 					writer.WriteString("REQERR\n")
 					writer.Flush()
 
@@ -90,14 +93,14 @@ func ClientHandler(connx *net.TCPConn) {
 
 				}
 
-				filenames = append(filenames, toParse[4:])
+				filenames = append(filenames, input[1])
 				leanState = kStateGetMode
 
-			} else if strings.HasPrefix(toParse, "PUT ") {
+			case "PUT":
 
-				if leanState == kStateGetMode {
+				if leanState == kStateGetMode || len(input) < 2 {
 
-					fmt.Println("Connection terminated. Attempted PUT in GET mode.")
+					fmt.Println("Request Error:", input)
 					writer.WriteString("REQERR\n")
 					writer.Flush()
 
@@ -107,7 +110,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 				}
 
-				toParse = toParse[4:]
+				filename := input[1]
 
 				// Pseudo-chroot jail
 				touched := true
@@ -115,30 +118,30 @@ func ClientHandler(connx *net.TCPConn) {
 
 					touched = false
 
-					if toParse[:1] == "/" {
-						toParse = toParse[1:]
+					if len(filename) > 1 && filename[:1] == "/" {
+						filename = filename[1:]
 						touched = true
 					}
 
-					if toParse[:2] == "./" {
-						toParse = toParse[2:]
+					if len(filename) > 2 && filename[:2] == "./" {
+						filename = filename[2:]
 						touched = true
 					}
 
-					if toParse[:3] == "../" {
-						toParse = toParse[3:]
+					if len(filename) > 3 && filename[:3] == "../" {
+						filename = filename[3:]
 						touched = true
 					}
 
 				}
 
-				filenames = append(make([]string, 0), toParse)
+				filenames = append(make([]string, 0), filename)
 
 				rxLength = 0
 				state = kStatePutMode
 				leanState = kStatePutMode
 
-			} else {
+			default:
 
 				fmt.Println("Command Error, ignoring request.")
 				state = kStateSetup
@@ -251,20 +254,21 @@ func ClientHandler(connx *net.TCPConn) {
 			}
 
 			toParse := strings.Join(temp, "")
-			temp = make([]string, 256)
+			input := strings.Split(toParse, " ")
+			temp = make([]string, 0)
 
-			if strings.HasPrefix(toParse, "LENGTH ") {
-
-				rxLength, error = strconv.ParseInt(toParse[7:], 10, 64)
-				if error != nil {
-					fmt.Println("Parse LENGTH:", error)
+			if input[0] == "LENGTH" {
+				if len(input) < 2 {
+					fmt.Println("Header LENGTH error:", error)
 					continue
 				}
-
-			} else if toParse == "" && rxLength > 0 {
-
+				rxLength, error = strconv.ParseInt(input[1], 10, 64)
+				if error != nil {
+					fmt.Println("Error parsing LENGTH:", error)
+					continue
+				}
+			} else if input[0] == "" && rxLength > 0 {
 				state = kStatePutReceive
-
 			}
 
 		case kStatePutReceive:
@@ -289,7 +293,7 @@ func ClientHandler(connx *net.TCPConn) {
 			}
 			defer file.Close()
 
-			for count < rxLength {
+			for count < rxLength-1024 {
 
 				readBytes, error := reader.Read(buffer)
 				if error != nil {
@@ -302,7 +306,20 @@ func ClientHandler(connx *net.TCPConn) {
 
 			}
 
-			temp := make([]string, 256)
+			smallBuffer := make([]byte, 1)
+
+			for count < rxLength {
+				readBytes, error := reader.Read(smallBuffer)
+				if error != nil {
+					fmt.Println("Connection terminated:", error)
+					return
+				}
+				count += int64(readBytes)
+				checksum.Write(smallBuffer[:readBytes])
+				file.Write(smallBuffer[:readBytes])
+			}
+
+			temp := make([]string, 0)
 
 			for {
 
@@ -318,11 +335,12 @@ func ClientHandler(connx *net.TCPConn) {
 				}
 
 				toParse := strings.Join(temp, "")
-				temp = make([]string, 256)
+				input := strings.Split(toParse, " ")
+				temp = make([]string, 0)
 
 				var inputChecksum string
-				if strings.HasPrefix(toParse, "CHECKSUM ") {
-					inputChecksum = toParse[9:]
+				if input[0] == "CHECKSUM" && len(input) > 1 {
+					inputChecksum = input[1]
 				} else {
 					continue
 				}
@@ -330,7 +348,7 @@ func ClientHandler(connx *net.TCPConn) {
 				if inputChecksum != fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) {
 
 					fmt.Println("Hash mismatch: sender claimed", inputChecksum+", received", fmt.Sprintf("%x", checksum.Sum(make([]byte, 0)))+".")
-					writer.WriteString("HASHERR " + filenames[0] + "\n")
+					writer.WriteString("HASHERR " + filenames[0] + "\n\n")
 					writer.Flush()
 
 					state = kStateSetup
@@ -340,7 +358,7 @@ func ClientHandler(connx *net.TCPConn) {
 				}
 
 				fmt.Println("Wrote", strconv.FormatInt(count, 10), "bytes to file", localFile+".")
-				writer.WriteString("RECV " + filenames[0] + "\n")
+				writer.WriteString("RECV " + filenames[0] + "\n\n")
 				writer.Flush()
 
 				state = kStateSetup

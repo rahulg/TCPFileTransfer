@@ -2,14 +2,14 @@ package main
 
 import (
 	"bufio"
+	"crypto/md5"
 	"flag"
 	"fmt"
+	"hash"
 	"io/ioutil"
-	//	"crypto/md5"
-	//	"hash"
 	"net"
 	"os"
-	//"strconv"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -24,18 +24,20 @@ const (
 var TXModeStrings = [4]string{"single", "parallel", "persistent", "pipelined"}
 
 const (
-	kStateSetup = iota
-	kStateGetMode
-	kStateGetReceive
-	kStatePutMode
-	kStateTeardown
+	kGetWaitOK = iota
+	kGetWaitLength
+	kGetRecvData
+	kGetChecksum
+	kGetDone
 )
 
 var (
-	Host   string
-	Port   string
-	TxMode int
-	IOMutex    sync.Mutex
+	Host        string
+	Port        string
+	TxMode      int
+	UIMutex     sync.Mutex
+	NetWorkerWG sync.WaitGroup
+	ServerAddr  *net.TCPAddr
 )
 
 func InitFlags() {
@@ -44,19 +46,526 @@ func InitFlags() {
 	flag.Parse()
 }
 
-func GetAll() {
-	fmt.Println("GetAll")
-	IOMutex.Unlock()
+func ParseGetResponse(filename string, reader *bufio.Reader) {
+
+	parserState := kGetWaitOK
+	temp := make([]string, 0)
+
+	for parserState == kGetWaitOK {
+
+		line, prefix, error := reader.ReadLine()
+		if error != nil {
+			fmt.Println("Connection terminated:", error)
+			return
+		}
+		temp = append(temp, string(line))
+		if prefix {
+			continue
+		}
+
+		toParse := strings.Join(temp, "")
+		input := strings.Split(toParse, " ")
+		temp = make([]string, 0)
+
+		switch input[0] {
+
+		case "REQERR":
+
+			fmt.Println("Request Error.")
+			return
+
+		case "NOTFOUND":
+
+			if len(input) < 2 {
+				fmt.Println("Connection error, invalid response format.")
+			} else {
+				fmt.Println("File", input[1], "was not found on the server.")
+			}
+			return
+
+		case "READERR":
+
+			if len(input) < 2 {
+				fmt.Println("Connection error, invalid response format.")
+			} else {
+				fmt.Println("Unable to read file", input[1]+".")
+			}
+			return
+
+		case "OK":
+
+			if len(input) < 2 {
+				fmt.Println("Connection error, invalid response format.")
+				return
+			} else if input[1] != filename {
+				fmt.Println("Unexpected file", input[1]+", was expecting", filename)
+				return
+			} else {
+				parserState = kGetWaitLength
+			}
+		}
+	}
+
+	var rxLength int64
+	headerValid := false
+
+	for parserState == kGetWaitLength {
+
+		line, prefix, error := reader.ReadLine()
+		if error != nil {
+			fmt.Println("Connection terminated:", error)
+			return
+		}
+		temp = append(temp, string(line))
+		if prefix {
+			continue
+		}
+
+		toParse := strings.Join(temp, "")
+		input := strings.Split(toParse, " ")
+		temp = make([]string, 0)
+
+		switch input[0] {
+
+		case "LENGTH":
+
+			if len(input) < 2 {
+				fmt.Println("Connection error, invalid response format.")
+				return
+			} else {
+				rxLength, error = strconv.ParseInt(input[1], 10, 64)
+				if error != nil {
+					fmt.Println("Error parsing LENGTH:", error)
+					break
+				}
+				headerValid = true
+			}
+
+		case "":
+
+			if headerValid {
+				parserState = kGetRecvData
+			}
+
+		}
+
+	}
+
+	var count int64
+	var localFile string
+	var checksum hash.Hash = md5.New()
+
+	for parserState == kGetRecvData {
+
+		buffer := make([]byte, 1024)
+
+		localFile = filename + "-part"
+
+		file, error := os.Create(localFile)
+		if error != nil {
+
+			fmt.Println("Error creating", filename, ":", error)
+			return
+
+		}
+		defer file.Close()
+
+		for count < rxLength-1024 {
+
+			readBytes, error := reader.Read(buffer)
+			if error != nil {
+				fmt.Println("Connection terminated:", error)
+				return
+			}
+
+			count += int64(readBytes)
+			checksum.Write(buffer[:readBytes])
+			file.Write(buffer[:readBytes])
+
+		}
+
+		smallBuffer := make([]byte, 1)
+
+		for count < rxLength {
+
+			readBytes, error := reader.Read(smallBuffer)
+			if error != nil {
+				fmt.Println("Connection terminated:", error)
+				return
+			}
+
+			count += int64(readBytes)
+			checksum.Write(smallBuffer[:readBytes])
+			file.Write(smallBuffer[:readBytes])
+
+		}
+
+		parserState = kGetChecksum
+	}
+
+	for parserState == kGetChecksum {
+
+		line, prefix, error := reader.ReadLine()
+		if error != nil {
+			fmt.Println("Connection terminated:", error)
+			return
+		}
+
+		temp = append(temp, string(line))
+		if prefix {
+			continue
+		}
+
+		toParse := strings.Join(temp, "")
+		input := strings.Split(toParse, " ")
+		temp = make([]string, 0)
+
+		var inputChecksum string
+
+		if input[0] == "CHECKSUM" {
+
+			if len(input) < 2 {
+
+				fmt.Println("Connection error, invalid response format.")
+				return
+
+			} else {
+
+				inputChecksum = input[1]
+
+			}
+
+		} else {
+			continue
+		}
+
+		if inputChecksum != fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) {
+
+			fmt.Println("Hash mismatch: server claimed", inputChecksum+", received", fmt.Sprintf("%x", checksum.Sum(make([]byte, 0)))+".")
+			return
+
+		}
+
+		parserState = kGetDone
+
+	}
+
+	// parserState == kGetDone
+	fmt.Println("Wrote", strconv.FormatInt(count, 10), "bytes to file", filename+".")
+	os.Rename(localFile, filename)
+
+}
+
+func GetRequest(filenames []string, pipelined bool) {
+
+	fmt.Println("Getting", filenames, "Pipelined:", pipelined)
+	connx, error := net.DialTCP("tcp", nil, ServerAddr)
+	if error != nil {
+		fmt.Println("Error connecting to server:", error)
+		NetWorkerWG.Done()
+		return
+	}
+
+	reader := bufio.NewReader(connx)
+	writer := bufio.NewWriter(connx)
+	defer connx.Close()
+
+	if pipelined {
+		for i := 0; i < len(filenames); i++ {
+			writer.WriteString("GET " + filenames[i] + "\n")
+		}
+		writer.WriteString("\n")
+		writer.Flush()
+		for i := 0; i < len(filenames); i++ {
+			ParseGetResponse(filenames[i], reader)
+		}
+	} else {
+		for i := 0; i < len(filenames); i++ {
+			writer.WriteString("GET " + filenames[i] + "\n\n")
+			writer.Flush()
+			ParseGetResponse(filenames[i], reader)
+		}
+	}
+
+	writer.WriteString("BYE")
+	writer.Flush()
+	NetWorkerWG.Done()
+
+}
+
+func GetIndex() (filenames []string) {
+
+	remoteFiles := make([]string, 0)
+
+	connx, error := net.DialTCP("tcp", nil, ServerAddr)
+	if error != nil {
+		fmt.Println("Error connecting to server:", error)
+		NetWorkerWG.Done()
+		return
+	}
+
+	reader := bufio.NewReader(connx)
+	writer := bufio.NewWriter(connx)
+	defer connx.Close()
+
+	writer.WriteString("GET \n\n")
+	writer.Flush()
+
+	parserState := kGetWaitOK
+	temp := make([]string, 0)
+
+	for parserState == kGetWaitOK {
+
+		line, prefix, error := reader.ReadLine()
+		if error != nil {
+			fmt.Println("Connection terminated:", error)
+			return
+		}
+		temp = append(temp, string(line))
+		if prefix {
+			continue
+		}
+
+		toParse := strings.Join(temp, "")
+		input := strings.Split(toParse, " ")
+		temp = make([]string, 0)
+
+		switch input[0] {
+
+		case "NOTFOUND":
+
+			if len(input) < 2 {
+				fmt.Println("Connection error, invalid response format.")
+			} else {
+				fmt.Println("File", input[1], "was not found on the server.")
+			}
+			return
+
+		case "OK":
+
+			if len(input) < 2 {
+				fmt.Println("Connection error, invalid response format.")
+				return
+			} else if input[1] != "" {
+				fmt.Println("Unexpected file", input[1]+", was expecting index.")
+				return
+			} else {
+				parserState = kGetWaitLength
+			}
+		}
+	}
+
+	var rxLength int64
+	headerValid := false
+
+	for parserState == kGetWaitLength {
+
+		line, prefix, error := reader.ReadLine()
+		if error != nil {
+			fmt.Println("Connection terminated:", error)
+			return
+		}
+		temp = append(temp, string(line))
+		if prefix {
+			continue
+		}
+
+		toParse := strings.Join(temp, "")
+		input := strings.Split(toParse, " ")
+		temp = make([]string, 0)
+
+		switch input[0] {
+
+		case "LENGTH":
+
+			if len(input) < 2 {
+				fmt.Println("Connection error, invalid response format.")
+				return
+			} else {
+				rxLength, error = strconv.ParseInt(input[1], 10, 64)
+				if error != nil {
+					fmt.Println("Error parsing LENGTH:", error)
+					break
+				}
+				headerValid = true
+			}
+
+		case "":
+
+			if headerValid {
+				parserState = kGetRecvData
+			}
+
+		}
+
+	}
+
+	var count int64
+	checksum := md5.New()
+	listBuffer := make([]byte, rxLength)
+
+	for parserState == kGetRecvData {
+
+		buffer := make([]byte, 1024)
+
+		for count < rxLength-1024 {
+
+			readBytes, error := reader.Read(buffer)
+			if error != nil {
+				fmt.Println("Connection terminated:", error)
+				return
+			}
+
+			copy(listBuffer[count:], buffer[:readBytes])
+			count += int64(readBytes)
+			checksum.Write(buffer[:readBytes])
+
+		}
+
+		smallBuffer := make([]byte, 1)
+
+		for count < rxLength {
+
+			readBytes, error := reader.Read(smallBuffer)
+			if error != nil {
+				fmt.Println("Connection terminated:", error)
+				return
+			}
+
+			copy(listBuffer[count:], smallBuffer[:readBytes])
+			count += int64(readBytes)
+			checksum.Write(smallBuffer[:readBytes])
+
+		}
+
+		parserState = kGetChecksum
+	}
+
+	for parserState == kGetChecksum {
+
+		line, prefix, error := reader.ReadLine()
+		if error != nil {
+			fmt.Println("Connection terminated:", error)
+			return
+		}
+
+		temp = append(temp, string(line))
+		if prefix {
+			continue
+		}
+
+		toParse := strings.Join(temp, "")
+		input := strings.Split(toParse, " ")
+		temp = make([]string, 0)
+
+		var inputChecksum string
+
+		if input[0] == "CHECKSUM" {
+
+			if len(input) < 2 {
+
+				fmt.Println("Connection error, invalid response format.")
+				return
+
+			} else {
+
+				inputChecksum = input[1]
+
+			}
+
+		} else {
+			continue
+		}
+
+		if inputChecksum != fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) {
+
+			fmt.Println("Hash mismatch: server claimed", inputChecksum+", received", fmt.Sprintf("%x", checksum.Sum(make([]byte, 0)))+".")
+			return
+
+		}
+
+		parserState = kGetDone
+
+	}
+
+	// parserState == kGetDone
+	writer.WriteString("BYE\n")
+	writer.Flush()
+	tempString := string(listBuffer)
+	remoteFiles = strings.Split(tempString, "\n")
+
+	return remoteFiles
+
 }
 
 func GetFiles(filenames []string) {
-	fmt.Println("Getting: ", filenames)
-	IOMutex.Unlock()
+
+	switch TxMode {
+	case kTXModeSingle:
+		for i := 0; i < len(filenames); i++ {
+			NetWorkerWG.Add(1)
+			temp := make([]string, 1)
+			temp[0] = filenames[i]
+			go GetRequest(temp, false)
+			NetWorkerWG.Wait()
+		}
+	case kTXModeParallel:
+		for i := 0; i < len(filenames); i++ {
+			NetWorkerWG.Add(1)
+			temp := make([]string, 1)
+			temp[0] = filenames[i]
+			go GetRequest(temp, false)
+		}
+		NetWorkerWG.Wait()
+	case kTXModePersistent, kTXModePipelined:
+		NetWorkerWG.Add(1)
+		go GetRequest(filenames, TxMode == kTXModePipelined)
+		NetWorkerWG.Wait()
+	}
+
+	UIMutex.Unlock()
+
 }
 
-func PutFile(filename string) {
-	fmt.Println("Putting: ", filename)
-	IOMutex.Unlock()
+func GetAll() {
+
+	fileList := GetIndex()
+	GetFiles(fileList[:len(fileList)-1])
+
+}
+
+func PutRequest(filenames []string, pipelined bool) {
+	fmt.Println("Putting", filenames, "Pipelined:", pipelined)
+	NetWorkerWG.Done()
+}
+
+func PutFiles(filenames []string) {
+
+	switch TxMode {
+	case kTXModeSingle:
+		for i := 0; i < len(filenames); i++ {
+			NetWorkerWG.Add(1)
+			temp := make([]string, 1)
+			temp[0] = filenames[i]
+			go PutRequest(temp, false)
+			NetWorkerWG.Wait()
+		}
+	case kTXModeParallel:
+		for i := 0; i < len(filenames); i++ {
+			NetWorkerWG.Add(1)
+			temp := make([]string, 1)
+			temp[0] = filenames[i]
+			go PutRequest(temp, false)
+		}
+		NetWorkerWG.Wait()
+	case kTXModePersistent, kTXModePipelined:
+		NetWorkerWG.Add(1)
+		go PutRequest(filenames, TxMode == kTXModePipelined)
+		NetWorkerWG.Wait()
+	}
+
+	UIMutex.Unlock()
+
 }
 
 func main() {
@@ -69,7 +578,7 @@ func main() {
 		fmt.Println("Address resolution error:", error)
 		return
 	}
-	tcpAddress = tcpAddress
+	ServerAddr = tcpAddress
 
 	TxMode = kTXModeSingle
 	temp := make([]string, 256)
@@ -78,7 +587,7 @@ func main() {
 
 	for {
 
-		IOMutex.Lock()
+		UIMutex.Lock()
 
 		fmt.Print("> ")
 
@@ -137,13 +646,13 @@ func main() {
 				fmt.Println("Invalid syntax. Usage: mode <single/parallel/persistent/pipelined>")
 			}
 
-			IOMutex.Unlock()
+			UIMutex.Unlock()
 
 		case "ls":
 			localFilesInfo, error := ioutil.ReadDir(".")
 			if error != nil {
 				fmt.Println("LS failed:", error)
-				IOMutex.Unlock()
+				UIMutex.Unlock()
 				continue
 			}
 
@@ -181,7 +690,7 @@ func main() {
 				}
 			}
 
-			IOMutex.Unlock()
+			UIMutex.Unlock()
 
 		case "get":
 
@@ -197,11 +706,20 @@ func main() {
 
 			if epicfail {
 				fmt.Println("Invalid syntax. Usage: get <file1> [file2] …")
-				IOMutex.Unlock()
+				UIMutex.Unlock()
 				continue
 			}
 
 			go GetFiles(wantedFiles)
+
+		case "list":
+
+			fileIndex := GetIndex()
+			for i := 0; i < len(fileIndex); i++ {
+				fmt.Println(fileIndex[i])
+			}
+
+			UIMutex.Unlock()
 
 		case "getall":
 
@@ -209,32 +727,31 @@ func main() {
 
 		case "put":
 
-			var destFile string
+			destFiles := make([]string, 0)
 
 			epicfail := true
 			for i := 1; i < len(input); i++ {
 				if input[i] != "" {
 					epicfail = false
-					destFile = input[i]
-					break
+					destFiles = append(destFiles, input[i])
 				}
 			}
 
 			if epicfail {
 				fmt.Println("Invalid syntax. Usage: put <file name>")
-				IOMutex.Unlock()
+				UIMutex.Unlock()
 				continue
 			}
 
-			go PutFile(destFile)
+			go PutFiles(destFiles)
 
 		default:
 			fmt.Println("Unrecognised command.")
 			fallthrough
 		case "help":
-			fmt.Println("Commands: get, getall, put, ls, help, mode, quit, exit")
-			IOMutex.Unlock()
-			
+			fmt.Println("Commands: get, getall, put, list, ls, help, mode, quit, exit")
+			UIMutex.Unlock()
+
 		case "quit", "exit":
 			return
 		}
