@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"flag"
 	"fmt"
-	"hash"
 	"io/ioutil"
 	"net"
 	"os"
@@ -153,7 +152,7 @@ func ParseGetResponse(filename string, reader *bufio.Reader) {
 
 	var count int64
 	var localFile string
-	var checksum hash.Hash = md5.New()
+	checksum := md5.New()
 
 	for parserState == kGetRecvData {
 
@@ -271,20 +270,26 @@ func GetRequest(filenames []string, pipelined bool) {
 	defer connx.Close()
 
 	if pipelined {
+
 		for i := 0; i < len(filenames); i++ {
 			writer.WriteString("GET " + filenames[i] + "\n")
 		}
+
 		writer.WriteString("\n")
 		writer.Flush()
+
 		for i := 0; i < len(filenames); i++ {
 			ParseGetResponse(filenames[i], reader)
 		}
+
 	} else {
+
 		for i := 0; i < len(filenames); i++ {
 			writer.WriteString("GET " + filenames[i] + "\n\n")
 			writer.Flush()
 			ParseGetResponse(filenames[i], reader)
 		}
+
 	}
 
 	writer.WriteString("BYE")
@@ -379,15 +384,19 @@ func GetIndex() (filenames []string) {
 		case "LENGTH":
 
 			if len(input) < 2 {
+
 				fmt.Println("Connection error, invalid response format.")
 				return
+
 			} else {
+
 				rxLength, error = strconv.ParseInt(input[1], 10, 64)
 				if error != nil {
 					fmt.Println("Error parsing LENGTH:", error)
 					break
 				}
 				headerValid = true
+
 			}
 
 		case "":
@@ -501,26 +510,38 @@ func GetIndex() (filenames []string) {
 func GetFiles(filenames []string) {
 
 	switch TxMode {
+
 	case kTXModeSingle:
+
 		for i := 0; i < len(filenames); i++ {
+
 			NetWorkerWG.Add(1)
 			temp := make([]string, 1)
 			temp[0] = filenames[i]
 			go GetRequest(temp, false)
 			NetWorkerWG.Wait()
+
 		}
+
 	case kTXModeParallel:
+
 		for i := 0; i < len(filenames); i++ {
+
 			NetWorkerWG.Add(1)
 			temp := make([]string, 1)
 			temp[0] = filenames[i]
 			go GetRequest(temp, false)
+
 		}
+
 		NetWorkerWG.Wait()
+
 	case kTXModePersistent, kTXModePipelined:
+
 		NetWorkerWG.Add(1)
 		go GetRequest(filenames, TxMode == kTXModePipelined)
 		NetWorkerWG.Wait()
+
 	}
 
 	UIMutex.Unlock()
@@ -534,9 +555,113 @@ func GetAll() {
 
 }
 
+func PutRequestSend(filename string, writer *bufio.Writer) {
+
+	fileInfo, error := os.Stat(filename)
+	if error != nil || fileInfo.IsDir() {
+		fmt.Println("File", filename, "not found.")
+		return
+	}
+
+	file, error := os.Open(filename)
+	if error != nil {
+		fmt.Println("Could not open", filename+".")
+		return
+	}
+	defer file.Close()
+
+	checksum := md5.New()
+
+	writer.WriteString("PUT " + filename + "\n")
+	writer.WriteString("LENGTH " + strconv.FormatInt(fileInfo.Size(), 10) + "\n\n")
+
+	buffer := make([]byte, 1024)
+	var sentBytes int64 = 0
+	readBytes, error := file.Read(buffer)
+	for error == nil {
+
+		sentBytes += int64(readBytes)
+
+		checksum.Write(buffer[:readBytes])
+		writer.WriteString(string(buffer[:readBytes]))
+
+		readBytes, error = file.Read(buffer)
+
+	}
+
+	writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
+	writer.Flush()
+
+}
+
 func PutRequest(filenames []string, pipelined bool) {
+
 	fmt.Println("Putting", filenames, "Pipelined:", pipelined)
+	connx, error := net.DialTCP("tcp", nil, ServerAddr)
+	if error != nil {
+		fmt.Println("Error connecting to server:", error)
+		NetWorkerWG.Done()
+		return
+	}
+
+	reader := bufio.NewReader(connx)
+	writer := bufio.NewWriter(connx)
+	defer connx.Close()
+
+	if pipelined {
+
+		for i := 0; i < len(filenames); i++ {
+			PutRequestSend(filenames[i], writer)
+		}
+
+		for i := 0; i < len(filenames); i++ {
+
+			line, _, error := reader.ReadLine()
+			if error != nil {
+				fmt.Println("Connection terminated:", error)
+				return
+			}
+
+			toParse := string(line)
+			input := strings.Split(toParse, " ")
+
+			if input[0] == "RECV" {
+				fmt.Println("Sent file", input[1]+".")
+			} else if input[1] == "WRERR" {
+				fmt.Println("Failed to write file", input[1]+".")
+			}
+
+		}
+
+	} else {
+
+		for i := 0; i < len(filenames); i++ {
+
+			PutRequestSend(filenames[i], writer)
+
+			line, _, error := reader.ReadLine()
+			if error != nil {
+				fmt.Println("Connection terminated:", error)
+				return
+			}
+
+			toParse := string(line)
+			input := strings.Split(toParse, " ")
+
+			if input[0] == "RECV" {
+				fmt.Println("Sent file", input[1]+".")
+			} else if input[1] == "WRERR" {
+				fmt.Println("Failed to write file", input[1]+".")
+			}
+
+		}
+
+	}
+
+	writer.WriteString("BYE")
+	writer.Flush()
 	NetWorkerWG.Done()
+
 }
 
 func PutFiles(filenames []string) {
@@ -589,7 +714,7 @@ func main() {
 
 		UIMutex.Lock()
 
-		fmt.Print("> ")
+		fmt.Print("] ")
 
 		line, prefix, error := stdin.ReadLine()
 		if error != nil {
@@ -712,7 +837,7 @@ func main() {
 
 			go GetFiles(wantedFiles)
 
-		case "list":
+		case "rls":
 
 			fileIndex := GetIndex()
 			for i := 0; i < len(fileIndex); i++ {
@@ -749,7 +874,48 @@ func main() {
 			fmt.Println("Unrecognised command.")
 			fallthrough
 		case "help":
-			fmt.Println("Commands: get, getall, put, list, ls, help, mode, quit, exit")
+			if len(input) < 2 {
+				fmt.Println("Commands: get, getall, put, ls, rls, help, mode, quit, exit\n")
+				fmt.Println("For more info type: help <command name>")
+			} else {
+
+				switch input[1] {
+				case "get":
+					fmt.Println("Downloads specified file(s) from the server.\n")
+					fmt.Println("Usage: get <file1> [file2] [file3] …")
+				case "getall":
+					fmt.Println("Downloads the file index from the server and all listed files.\n")
+					fmt.Println("Usage: getall")
+				case "put":
+					fmt.Println("Uploads the specified file(s) to the server.\n")
+					fmt.Println("Usage: put <file1> [file2] [file3] …")
+				case "ls":
+					fmt.Println("Lists all files in the current working directory.\n")
+					fmt.Println("Usage: ls")
+				case "rls":
+					fmt.Println("Lists all files on the server.\n")
+					fmt.Println("Usage: rls")
+				case "help":
+					fmt.Println("If you need help for help, you need help.")
+					fmt.Println("Yo dawg, I heard you like help. So I put some help in your help so you can help while you help.\n")
+					fmt.Println("Usage: help                 || Lists all available commands.")
+					fmt.Println("       help <command name>  || Prints info and usage for specified command.")
+				case "mode":
+					fmt.Println("Switches transfer modes.\n")
+					fmt.Println("Usage: mode        || Prints current mode.")
+					fmt.Println("       mode list   || Lists all available modes.")
+					fmt.Println("       mode [mode] || Switches transfer modes to the specified mode.")
+				case "quit", "exit":
+					fmt.Println("Exits the application.\n")
+					fmt.Println("Usage: quit")
+					fmt.Println("       exit")
+				default:
+					fmt.Println("Commands: get, getall, put, ls, rls, help, mode, quit, exit\n")
+					fmt.Println("For more info type: help <command name>")
+				}
+
+			}
+			
 			UIMutex.Unlock()
 
 		case "quit", "exit":

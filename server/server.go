@@ -5,7 +5,6 @@ import (
 	"crypto/md5"
 	"flag"
 	"fmt"
-	"hash"
 	"io/ioutil"
 	"net"
 	"os"
@@ -175,7 +174,7 @@ func ClientHandler(connx *net.TCPConn) {
 						totalSize += int64(len(localFiles[i]) + 1)
 					}
 
-					var checksum hash.Hash = md5.New()
+					checksum := md5.New()
 
 					writer.WriteString("OK " + filenames[i] + "\n")
 					writer.WriteString("LENGTH " + strconv.FormatInt(totalSize, 10) + "\n\n")
@@ -209,17 +208,17 @@ func ClientHandler(connx *net.TCPConn) {
 						continue
 					}
 
-					var checksum hash.Hash = md5.New()
+					checksum := md5.New()
 
 					writer.WriteString("OK " + filenames[i] + "\n")
 					writer.WriteString("LENGTH " + strconv.FormatInt(fileInfo.Size(), 10) + "\n\n")
 
 					buffer := make([]byte, 1024)
-					sentBytes := 0
+					var sentBytes int64 = 0
 					readBytes, error := file.Read(buffer)
 					for error == nil {
 
-						sentBytes += readBytes
+						sentBytes += int64(readBytes)
 
 						checksum.Write(buffer[:readBytes])
 						writer.WriteString(string(buffer[:readBytes]))
@@ -274,10 +273,10 @@ func ClientHandler(connx *net.TCPConn) {
 		case kStatePutReceive:
 
 			var count int64
-			var checksum hash.Hash = md5.New()
+			checksum := md5.New()
 			buffer := make([]byte, 1024)
 
-			localFile := "files/" + filenames[0]
+			localFile := "files/" + filenames[0] + "-part"
 
 			file, error := os.Create(localFile)
 			if error != nil {
@@ -357,7 +356,8 @@ func ClientHandler(connx *net.TCPConn) {
 
 				}
 
-				fmt.Println("Wrote", strconv.FormatInt(count, 10), "bytes to file", localFile+".")
+				os.Rename(localFile, localFile[:len(localFile)-5])
+				fmt.Println("Wrote", strconv.FormatInt(count, 10), "bytes to file", localFile[:len(localFile)-5]+".")
 				writer.WriteString("RECV " + filenames[0] + "\n\n")
 				writer.Flush()
 
