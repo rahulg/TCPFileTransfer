@@ -555,18 +555,18 @@ func GetAll() {
 
 }
 
-func PutRequestSend(filename string, writer *bufio.Writer) {
+func PutRequestSend(filename string, writer *bufio.Writer) bool {
 
 	fileInfo, error := os.Stat(filename)
 	if error != nil || fileInfo.IsDir() {
 		fmt.Println("File", filename, "not found.")
-		return
+		return false
 	}
 
 	file, error := os.Open(filename)
 	if error != nil {
 		fmt.Println("Could not open", filename+".")
-		return
+		return false
 	}
 	defer file.Close()
 
@@ -591,6 +591,7 @@ func PutRequestSend(filename string, writer *bufio.Writer) {
 
 	writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
 	writer.Flush()
+	return true
 
 }
 
@@ -611,7 +612,11 @@ func PutRequest(filenames []string, pipelined bool) {
 	if pipelined {
 
 		for i := 0; i < len(filenames); i++ {
-			PutRequestSend(filenames[i], writer)
+			success := PutRequestSend(filenames[i], writer)
+			if !success {
+				NetWorkerWG.Done()
+				return
+			}
 		}
 
 		for i := 0; i < len(filenames); i++ {
@@ -619,6 +624,7 @@ func PutRequest(filenames []string, pipelined bool) {
 			line, _, error := reader.ReadLine()
 			if error != nil {
 				fmt.Println("Connection terminated:", error)
+				NetWorkerWG.Done()
 				return
 			}
 
@@ -637,11 +643,16 @@ func PutRequest(filenames []string, pipelined bool) {
 
 		for i := 0; i < len(filenames); i++ {
 
-			PutRequestSend(filenames[i], writer)
+			success := PutRequestSend(filenames[i], writer)
+			if !success {
+				NetWorkerWG.Done()
+				return
+			}
 
 			line, _, error := reader.ReadLine()
 			if error != nil {
 				fmt.Println("Connection terminated:", error)
+				NetWorkerWG.Done()
 				return
 			}
 
@@ -915,7 +926,7 @@ func main() {
 				}
 
 			}
-			
+
 			UIMutex.Unlock()
 
 		case "quit", "exit":
