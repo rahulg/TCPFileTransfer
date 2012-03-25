@@ -1,7 +1,7 @@
 Request:
 
 GET <fname>
-EOT
+BYE
 
 Response:
 
@@ -11,7 +11,7 @@ LENGTH <length>
 <body>
 
 CHECKSUM <md5>
-EOT
+
 
 =====================
 
@@ -20,7 +20,7 @@ Request:
 GET <fname>
 GET <fname2>
 GET <fname3>
-EOT
+BYE
 
 Response:
 
@@ -38,7 +38,7 @@ LENGTH <length2>
 
 CHECKSUM <md5>
 …
-EOT
+
 
 =====================
 
@@ -50,11 +50,11 @@ LENGTH <length>
 <body>
 
 CHECKSUM <md5>
-EOT
+BYE
 
 Response:
 
 OK <fname>
-EOT
+
 
 =====================

@@ -92,7 +92,32 @@ func ClientHandler(connx *net.TCPConn) {
 
 				}
 
-				filenames = append(filenames, input[1])
+				filename := input[1]
+
+				// Pseudo-chroot jail
+				touched := true
+				for touched {
+
+					touched = false
+
+					if len(filename) > 1 && filename[:1] == "/" {
+						filename = filename[1:]
+						touched = true
+					}
+
+					if len(filename) > 2 && filename[:2] == "./" {
+						filename = filename[2:]
+						touched = true
+					}
+
+					if len(filename) > 3 && filename[:3] == "../" {
+						filename = filename[3:]
+						touched = true
+					}
+
+				}
+
+				filenames = append(filenames, filename)
 				leanState = kStateGetMode
 
 			case "PUT":
