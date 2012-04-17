@@ -34,6 +34,7 @@ const (
 var (
 	Host        string
 	Port        string
+	TestMode	string
 	TxMode      int
 	UIMutex     sync.Mutex
 	NetWorkerWG sync.WaitGroup
@@ -43,6 +44,7 @@ var (
 func InitFlags() {
 	flag.StringVar(&Host, "host", "127.0.0.1", "Hostname or IP address to connect to.")
 	flag.StringVar(&Port, "port", "65500", "Port number to connect to.")
+	flag.StringVar(&TestMode, "test", "", "Automatic testing mode.")
 	flag.Parse()
 }
 
@@ -728,6 +730,41 @@ func main() {
 	ServerAddr = tcpAddress
 
 	TxMode = kTXModeSingle
+
+	if TestMode != "" {
+
+		// Set test mode
+		switch TestMode {
+			case "single":
+				fmt.Println("Mode: single")
+				TxMode = kTXModeSingle
+
+			case "parallel":
+				fmt.Println("Mode: parallel")
+				TxMode = kTXModeParallel
+
+			case "persistent":
+				fmt.Println("Mode: persistent")
+				TxMode = kTXModePersistent
+
+			case "pipelined":
+				fmt.Println("Mode: pipelined")
+				TxMode = kTXModePipelined
+
+			default:
+				TxMode = kTXModeSingle
+		}
+
+		UIMutex.Lock()
+
+		// Run test
+		go GetAll()
+
+		UIMutex.Lock()
+
+		return
+	}
+
 	temp := make([]string, 256)
 
 	stdin := bufio.NewReader(os.Stdin)
