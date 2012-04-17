@@ -34,18 +34,19 @@ const (
 var (
 	Host         string
 	Port         string
+	ServerAddr   *net.TCPAddr
+	ValidEP      bool
 	TestMode     string
-	MaxParallel  int
 	TxMode       int
+	MaxParallel  int
 	UIMutex      sync.Mutex
 	NetWorkerWG  sync.WaitGroup
-	ServerAddr   *net.TCPAddr
 	ConnLimitSem chan int
 )
 
 func InitFlags() {
-	flag.StringVar(&Host, "host", "127.0.0.1", "Hostname or IP address to connect to.")
-	flag.StringVar(&Port, "port", "65500", "Port number to connect to.")
+	flag.StringVar(&Host, "host", "localhost", "Hostname or IP address to connect to.")
+	flag.StringVar(&Port, "port", "65500", "Port to connect to. May be specified as a number or protocol identifier.")
 	flag.StringVar(&TestMode, "run", "interactive", "Non-interactive mode: single, parallel, persistent or pipelined. Other values will run an interactive shell.")
 	flag.IntVar(&MaxParallel, "maxconn", 65535, "The maximum number of connections in parallel mode.")
 	flag.Parse()
@@ -270,6 +271,7 @@ func GetRequest(filenames []string, pipelined bool) {
 	if error != nil {
 		fmt.Println("Error connecting to server:", error)
 		NetWorkerWG.Done()
+		<-ConnLimitSem
 		return
 	}
 
@@ -315,7 +317,6 @@ func GetIndex() (filenames []string) {
 	connx, error := net.DialTCP("tcp", nil, ServerAddr)
 	if error != nil {
 		fmt.Println("Error connecting to server:", error)
-		NetWorkerWG.Done()
 		return
 	}
 
@@ -526,15 +527,8 @@ func GetFiles(filenames []string) {
 
 	case kTXModeSingle:
 
-		for i := 0; i < len(filenames); i++ {
-
-			NetWorkerWG.Add(1)
-			temp := make([]string, 1)
-			temp[0] = filenames[i]
-			go GetRequest(temp, false)
-			NetWorkerWG.Wait()
-
-		}
+		ConnLimitSem = make(chan int, 1)
+		fallthrough
 
 	case kTXModeParallel:
 
@@ -567,7 +561,11 @@ func GetFiles(filenames []string) {
 func GetAll() {
 
 	fileList := GetIndex()
-	GetFiles(fileList[:len(fileList)-1])
+	if len(fileList) > 0 {
+		GetFiles(fileList[:len(fileList)-1])
+	} else {
+		UIMutex.Unlock()
+	}
 
 }
 
@@ -613,11 +611,14 @@ func PutRequestSend(filename string, writer *bufio.Writer) bool {
 
 func PutRequest(filenames []string, pipelined bool) {
 
+	ConnLimitSem <- 1
+
 	fmt.Println("Putting", filenames, "Pipelined:", pipelined)
 	connx, error := net.DialTCP("tcp", nil, ServerAddr)
 	if error != nil {
 		fmt.Println("Error connecting to server:", error)
 		NetWorkerWG.Done()
+		<-ConnLimitSem
 		return
 	}
 
@@ -689,33 +690,40 @@ func PutRequest(filenames []string, pipelined bool) {
 	writer.Flush()
 	NetWorkerWG.Done()
 
+	<-ConnLimitSem
+
 }
 
 func PutFiles(filenames []string) {
 
 	timeStart := time.Now()
+	ConnLimitSem = make(chan int, MaxParallel)
 
 	switch TxMode {
 	case kTXModeSingle:
-		for i := 0; i < len(filenames); i++ {
-			NetWorkerWG.Add(1)
-			temp := make([]string, 1)
-			temp[0] = filenames[i]
-			go PutRequest(temp, false)
-			NetWorkerWG.Wait()
-		}
+
+		ConnLimitSem = make(chan int, 1)
+		fallthrough
+
 	case kTXModeParallel:
+
 		for i := 0; i < len(filenames); i++ {
+
 			NetWorkerWG.Add(1)
 			temp := make([]string, 1)
 			temp[0] = filenames[i]
 			go PutRequest(temp, false)
+
 		}
+
 		NetWorkerWG.Wait()
+
 	case kTXModePersistent, kTXModePipelined:
+
 		NetWorkerWG.Add(1)
 		go PutRequest(filenames, TxMode == kTXModePipelined)
 		NetWorkerWG.Wait()
+
 	}
 
 	dur := time.Since(timeStart)
@@ -725,17 +733,26 @@ func PutFiles(filenames []string) {
 
 }
 
-func main() {
-
-	InitFlags()
+func updateServerEP() {
 
 	listenPort := Host + ":" + Port
 	tcpAddress, error := net.ResolveTCPAddr("tcp", listenPort)
 	if error != nil {
 		fmt.Println("Address resolution error:", error)
+		ValidEP = false
 		return
+	} else {
+		ServerAddr = tcpAddress
+		ValidEP = true
 	}
-	ServerAddr = tcpAddress
+
+}
+
+func main() {
+
+	InitFlags()
+
+	updateServerEP()
 
 	runTest := false
 
@@ -802,13 +819,54 @@ func main() {
 		input := strings.Split(toParse, " ")
 		temp = make([]string, 256)
 
-		switch input[0] {
+		switch strings.TrimSpace(input[0]) {
+		case "host":
+
+			if len(input) == 2 && input[1] != "" {
+				Host = input[1]
+				fmt.Println("Server:", Host+":"+Port)
+				updateServerEP()
+			} else {
+				fmt.Println("Server Host:", Host)
+			}
+
+			UIMutex.Unlock()
+
+		case "port":
+
+			if len(input) == 2 && input[1] != "" {
+				Port = input[1]
+				fmt.Println("Server:", Host+":"+Port)
+				updateServerEP()
+			} else {
+				fmt.Println("Server Port:", Port)
+			}
+
+			UIMutex.Unlock()
+
+		case "climit":
+
+			if len(input) == 2 && input[1] != "" {
+				connLimit, error := strconv.ParseInt(input[1], 10, 0)
+				if error != nil {
+					fmt.Println("Error parsing connection limit:", error)
+					UIMutex.Unlock()
+					continue
+				}
+				MaxParallel = int(connLimit)
+				updateServerEP()
+			}
+			fmt.Println("Parallel connection limit:", MaxParallel)
+
+			UIMutex.Unlock()
+
 		case "mode":
 
 			if len(input) == 1 {
 
 				fmt.Println("Current Mode:", TXModeStrings[TxMode])
-				fmt.Println("Enter \"mode list\" to view available modes.")
+				fmt.Println("To view available modes, enter \"mode list\".")
+				fmt.Println("To change modes, enter \"mode <new mode>\".")
 
 			} else if len(input) == 2 {
 
@@ -892,6 +950,12 @@ func main() {
 
 		case "get":
 
+			if !ValidEP {
+				fmt.Println("Please set a valid server host and port with the \"host\" and \"port\" commands.")
+				UIMutex.Unlock()
+				continue
+			}
+
 			wantedFiles := make([]string, 0)
 
 			epicfail := true
@@ -923,9 +987,21 @@ func main() {
 
 		case "getall":
 
+			if !ValidEP {
+				fmt.Println("Please set a valid server host and port with the \"host\" and \"port\" commands.")
+				UIMutex.Unlock()
+				continue
+			}
+
 			go GetAll()
 
 		case "put":
+
+			if !ValidEP {
+				fmt.Println("Please set a valid server host and port with the \"host\" and \"port\" commands.")
+				UIMutex.Unlock()
+				continue
+			}
 
 			destFiles := make([]string, 0)
 
@@ -945,16 +1021,27 @@ func main() {
 
 			go PutFiles(destFiles)
 
-		default:
-			fmt.Println("Unrecognised command.")
-			fallthrough
 		case "help":
 			if len(input) < 2 {
-				fmt.Println("Commands: get, getall, put, ls, rls, help, mode, quit, exit\n")
+				fmt.Println("Commands: host, port, climit, mode, get, getall, put, ls, rls, help, exit\n")
 				fmt.Println("For more info type: help <command name>")
 			} else {
 
 				switch input[1] {
+				case "host":
+					fmt.Println("Sets the server's hostname.\n")
+					fmt.Println("Usage: host <hostname/ip>")
+				case "port":
+					fmt.Println("Sets the server's port. Port may be specified as a number or protocol identifier.\n")
+					fmt.Println("Usage: port <port>")
+				case "climit":
+					fmt.Println("Sets the maximum number of TCP connections to use in parallel mode.\n")
+					fmt.Println("Usage: climit <maximum connections>")
+				case "mode":
+					fmt.Println("Switches transfer modes.\n")
+					fmt.Println("Usage: mode        || Prints current mode.")
+					fmt.Println("       mode list   || Lists all available modes.")
+					fmt.Println("       mode [mode] || Switches transfer modes to the specified mode.")
 				case "get":
 					fmt.Println("Downloads specified file(s) from the server.\n")
 					fmt.Println("Usage: get <file1> [file2] [file3] …")
@@ -975,17 +1062,12 @@ func main() {
 					fmt.Println("Yo dawg, I heard you like help. So I put some help in your help so you can help while you help.\n")
 					fmt.Println("Usage: help                 || Lists all available commands.")
 					fmt.Println("       help <command name>  || Prints info and usage for specified command.")
-				case "mode":
-					fmt.Println("Switches transfer modes.\n")
-					fmt.Println("Usage: mode        || Prints current mode.")
-					fmt.Println("       mode list   || Lists all available modes.")
-					fmt.Println("       mode [mode] || Switches transfer modes to the specified mode.")
 				case "quit", "exit":
 					fmt.Println("Exits the application.\n")
 					fmt.Println("Usage: quit")
 					fmt.Println("       exit")
 				default:
-					fmt.Println("Commands: get, getall, put, ls, rls, help, mode, quit, exit\n")
+					fmt.Println("Commands: host, port, climit, mode, get, getall, put, ls, rls, help, exit\n")
 					fmt.Println("For more info type: help <command name>")
 				}
 
@@ -995,6 +1077,9 @@ func main() {
 
 		case "quit", "exit":
 			return
+
+		default:
+			UIMutex.Unlock()
 		}
 	}
 
