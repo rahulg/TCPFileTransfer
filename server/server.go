@@ -56,7 +56,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 			line, prefix, error := reader.ReadLine()
 			if error != nil {
-				fmt.Println("Connection terminated:", error)
+				fmt.Println("[", connx.RemoteAddr(), "] Connection terminated:", error)
 				return
 			}
 			temp = append(temp, string(line))
@@ -82,7 +82,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 				if leanState == kStatePutMode || len(input) < 2 {
 
-					fmt.Println("Request Error:", input)
+					fmt.Println("[", connx.RemoteAddr(), "] Request Format Error:", input)
 					writer.WriteString("REQERR\n")
 					writer.Flush()
 
@@ -124,7 +124,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 				if leanState == kStateGetMode || len(input) < 2 {
 
-					fmt.Println("Request Error:", input)
+					fmt.Println("[", connx.RemoteAddr(), "] Request Format Error:", input)
 					writer.WriteString("REQERR\n")
 					writer.Flush()
 
@@ -167,7 +167,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 			default:
 
-				fmt.Println("Command Error, ignoring request.")
+				fmt.Println("[", connx.RemoteAddr(), "] Unrecognised command:", input)
 				state = kStateSetup
 				leanState = kStateConfig
 
@@ -182,7 +182,7 @@ func ClientHandler(connx *net.TCPConn) {
 					localFiles := make([]string, 0)
 					localFilesInfo, error := ioutil.ReadDir("files")
 					if error != nil {
-						fmt.Println("Directory listing error:", error)
+						fmt.Println("[", connx.RemoteAddr(), "] Directory listing error:", error)
 						writer.WriteString("NOTFOUND " + filenames[i] + "\n\n")
 						continue
 					}
@@ -209,7 +209,7 @@ func ClientHandler(connx *net.TCPConn) {
 						writer.WriteString(localFiles[i] + "\n")
 					}
 
-					fmt.Println("Sent", totalSize, "bytes for index.")
+					fmt.Println("[", connx.RemoteAddr(), "] Sent", totalSize, "bytes for index")
 					writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
 					writer.Flush()
 
@@ -219,7 +219,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 					fileInfo, error := os.Stat(localFile)
 					if error != nil || fileInfo.IsDir() {
-						fmt.Println("Stat", localFile, ":", error)
+						fmt.Println("[", connx.RemoteAddr(), "] Error stat-ing", localFile, ":", error)
 						writer.WriteString("NOTFOUND " + filenames[i] + "\n\n")
 						writer.Flush()
 						continue
@@ -227,7 +227,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 					file, error := os.Open(localFile)
 					if error != nil {
-						fmt.Println("Open", localFile, ":", error)
+						fmt.Println("[", connx.RemoteAddr(), "] Error opening", localFile, ":", error)
 						writer.WriteString("READERR " + filenames[i] + "\n\n")
 						writer.Flush()
 						continue
@@ -252,7 +252,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 					}
 
-					fmt.Println("Sent", sentBytes, "bytes from file", localFile+".")
+					fmt.Println("[", connx.RemoteAddr(), "] Sent", sentBytes, "bytes from file", localFile+".")
 					writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
 					file.Close()
 					writer.Flush()
@@ -268,7 +268,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 			line, prefix, error := reader.ReadLine()
 			if error != nil {
-				fmt.Println("Connection terminated:", error)
+				fmt.Println("[", connx.RemoteAddr(), "] Connection terminated:", error)
 				return
 			}
 
@@ -283,12 +283,12 @@ func ClientHandler(connx *net.TCPConn) {
 
 			if input[0] == "LENGTH" {
 				if len(input) < 2 {
-					fmt.Println("Header LENGTH error:", error)
+					fmt.Println("[", connx.RemoteAddr(), "] Error in header field \"LENGTH\"")
 					continue
 				}
 				rxLength, error = strconv.ParseInt(input[1], 10, 64)
 				if error != nil {
-					fmt.Println("Error parsing LENGTH:", error)
+					fmt.Println("[", connx.RemoteAddr(), "] Error parsing header field LENGTH:", error)
 					continue
 				}
 			} else if input[0] == "" && rxLength > 0 {
@@ -306,7 +306,7 @@ func ClientHandler(connx *net.TCPConn) {
 			file, error := os.Create(localFile)
 			if error != nil {
 
-				fmt.Println("Create", localFile, ":", error)
+				fmt.Println("[", connx.RemoteAddr(), "] Error creating", localFile, ":", error)
 				writer.WriteString("WRERR " + filenames[0] + "\n\n")
 				writer.Flush()
 
@@ -321,7 +321,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 				readBytes, error := reader.Read(buffer)
 				if error != nil {
-					fmt.Println("Connection terminated:", error)
+					fmt.Println("[", connx.RemoteAddr(), "] Connection terminated:", error)
 					return
 				}
 				count += int64(readBytes)
@@ -335,7 +335,7 @@ func ClientHandler(connx *net.TCPConn) {
 			for count < rxLength {
 				readBytes, error := reader.Read(smallBuffer)
 				if error != nil {
-					fmt.Println("Connection terminated:", error)
+					fmt.Println("[", connx.RemoteAddr(), "] Connection terminated:", error)
 					return
 				}
 				count += int64(readBytes)
@@ -349,7 +349,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 				line, prefix, error := reader.ReadLine()
 				if error != nil {
-					fmt.Println("Connection terminated:", error)
+					fmt.Println("[", connx.RemoteAddr(), "] Connection terminated:", error)
 					return
 				}
 
@@ -371,7 +371,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 				if inputChecksum != fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) {
 
-					fmt.Println("Hash mismatch: sender claimed", inputChecksum+", received", fmt.Sprintf("%x", checksum.Sum(make([]byte, 0)))+".")
+					fmt.Println("[", connx.RemoteAddr(), "] Hash mismatch. Sender claimed", inputChecksum+", received", fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))))
 					writer.WriteString("HASHERR " + filenames[0] + "\n\n")
 					writer.Flush()
 
@@ -382,7 +382,7 @@ func ClientHandler(connx *net.TCPConn) {
 				}
 
 				os.Rename(localFile, localFile[:len(localFile)-5])
-				fmt.Println("Wrote", strconv.FormatInt(count, 10), "bytes to file", localFile[:len(localFile)-5]+".")
+				fmt.Println("[", connx.RemoteAddr(), "] Wrote", strconv.FormatInt(count, 10), "bytes to file", localFile[:len(localFile)-5])
 				writer.WriteString("RECV " + filenames[0] + "\n\n")
 				writer.Flush()
 
@@ -394,7 +394,7 @@ func ClientHandler(connx *net.TCPConn) {
 
 		case kStateTeardown:
 
-			fmt.Println("Connection closed by client.")
+			fmt.Println("[", connx.RemoteAddr(), "] Connection closed by client")
 			return
 
 		}
@@ -408,13 +408,13 @@ func main() {
 	listenPort := ":" + Port
 	tcpAddress, error := net.ResolveTCPAddr("tcp", listenPort)
 	if error != nil {
-		fmt.Println("Resolve Error:", error)
+		fmt.Println("Error resolving listening address:", error)
 		return
 	}
 
 	tcpListener, error := net.ListenTCP("tcp", tcpAddress)
 	if error != nil {
-		fmt.Println("Listen Error:", error)
+		fmt.Println("Error while attempting to listen:", error)
 		return
 	}
 	defer tcpListener.Close()
@@ -423,7 +423,7 @@ func main() {
 
 		connx, error := tcpListener.AcceptTCP()
 		if error != nil {
-			fmt.Println("Accept Error:", error)
+			fmt.Println("Error while accepting connection:", error)
 			continue
 		}
 
