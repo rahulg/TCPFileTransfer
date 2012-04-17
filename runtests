@@ -1,0 +1,46 @@
+#!/bin/bash
+
+OLDPWD=`pwd`
+
+cd testbed
+
+rm testfile*
+
+echo "Single connection"
+
+for i in {1..10}
+do
+	./client --run single | grep Took | cut -d ' ' -f 2
+done
+
+rm testfile*
+
+echo "Parallel connections"
+
+for i in {1..10}
+do
+	./client --run parallel | grep Took | cut -d ' ' -f 2
+done
+
+rm testfile*
+
+echo "Persistent connection"
+
+for i in {1..10}
+do
+	./client --run persistent | grep Took | cut -d ' ' -f 2
+done
+
+rm testfile*
+
+echo "Pipelined requests"
+
+for i in {1..10}
+do
+	./client --run pipelined | grep Took | cut -d ' ' -f 2
+done
+
+rm testfile*
+
+cd $OLDPWD
+
