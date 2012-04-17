@@ -58,3 +58,36 @@ OK <fname>
 
 
 =====================
+
+Request:
+
+PUT <fname>
+LENGTH <length>
+
+<body>
+
+CHECKSUM <md5>
+
+PUT <fname2>
+LENGTH <length2>
+
+<body2>
+
+CHECKSUM <md52>
+
+PUT <fname3>
+LENGTH <length3>
+
+<body3>
+
+CHECKSUM <md53>
+BYE
+
+Response:
+
+OK <fname>
+OK <fname2>
+OK <fname3>
+
+
+=====================
