@@ -32,19 +32,22 @@ const (
 )
 
 var (
-	Host        string
-	Port        string
-	TestMode	string
-	TxMode      int
-	UIMutex     sync.Mutex
-	NetWorkerWG sync.WaitGroup
-	ServerAddr  *net.TCPAddr
+	Host         string
+	Port         string
+	TestMode     string
+	MaxParallel  int
+	TxMode       int
+	UIMutex      sync.Mutex
+	NetWorkerWG  sync.WaitGroup
+	ServerAddr   *net.TCPAddr
+	ConnLimitSem chan int
 )
 
 func InitFlags() {
 	flag.StringVar(&Host, "host", "127.0.0.1", "Hostname or IP address to connect to.")
 	flag.StringVar(&Port, "port", "65500", "Port number to connect to.")
-	flag.StringVar(&TestMode, "test", "", "Automatic testing mode.")
+	flag.StringVar(&TestMode, "run", "interactive", "Non-interactive mode: single, parallel, persistent or pipelined. Other values will run an interactive shell.")
+	flag.IntVar(&MaxParallel, "maxconn", 65535, "The maximum number of connections in parallel mode.")
 	flag.Parse()
 }
 
@@ -260,6 +263,8 @@ func ParseGetResponse(filename string, reader *bufio.Reader) {
 
 func GetRequest(filenames []string, pipelined bool) {
 
+	ConnLimitSem <- 1
+
 	fmt.Println("Getting", filenames, "Pipelined:", pipelined)
 	connx, error := net.DialTCP("tcp", nil, ServerAddr)
 	if error != nil {
@@ -298,6 +303,8 @@ func GetRequest(filenames []string, pipelined bool) {
 	writer.WriteString("BYE")
 	writer.Flush()
 	NetWorkerWG.Done()
+
+	<-ConnLimitSem
 
 }
 
@@ -513,6 +520,7 @@ func GetIndex() (filenames []string) {
 func GetFiles(filenames []string) {
 
 	timeStart := time.Now()
+	ConnLimitSem = make(chan int, MaxParallel)
 
 	switch TxMode {
 
@@ -729,31 +737,36 @@ func main() {
 	}
 	ServerAddr = tcpAddress
 
-	TxMode = kTXModeSingle
+	runTest := false
 
-	if TestMode != "" {
+	// Set test mode
+	switch TestMode {
+	case "single":
+		fmt.Println("Mode: single")
+		TxMode = kTXModeSingle
+		runTest = true
 
-		// Set test mode
-		switch TestMode {
-			case "single":
-				fmt.Println("Mode: single")
-				TxMode = kTXModeSingle
+	case "parallel":
+		fmt.Println("Mode: parallel")
+		TxMode = kTXModeParallel
+		runTest = true
 
-			case "parallel":
-				fmt.Println("Mode: parallel")
-				TxMode = kTXModeParallel
+	case "persistent":
+		fmt.Println("Mode: persistent")
+		TxMode = kTXModePersistent
+		runTest = true
 
-			case "persistent":
-				fmt.Println("Mode: persistent")
-				TxMode = kTXModePersistent
+	case "pipelined":
+		fmt.Println("Mode: pipelined")
+		TxMode = kTXModePipelined
+		runTest = true
 
-			case "pipelined":
-				fmt.Println("Mode: pipelined")
-				TxMode = kTXModePipelined
+	default:
+		TxMode = kTXModeSingle
+		runTest = false
+	}
 
-			default:
-				TxMode = kTXModeSingle
-		}
+	if runTest {
 
 		UIMutex.Lock()
 
@@ -901,7 +914,7 @@ func main() {
 
 			fileIndex := GetIndex()
 			for i := 0; i < len(fileIndex); i++ {
-				if(fileIndex[i] != "") {
+				if fileIndex[i] != "" {
 					fmt.Println(fileIndex[i])
 				}
 			}
