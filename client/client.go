@@ -795,6 +795,7 @@ func main() {
 			if len(input) == 1 {
 
 				fmt.Println("Current Mode:", TXModeStrings[TxMode])
+				fmt.Println("Enter \"mode list\" to view available modes.")
 
 			} else if len(input) == 2 {
 
