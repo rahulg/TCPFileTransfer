@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const (
@@ -509,6 +510,8 @@ func GetIndex() (filenames []string) {
 
 func GetFiles(filenames []string) {
 
+	timeStart := time.Now()
+
 	switch TxMode {
 
 	case kTXModeSingle:
@@ -543,6 +546,9 @@ func GetFiles(filenames []string) {
 		NetWorkerWG.Wait()
 
 	}
+
+	dur := time.Since(timeStart)
+	fmt.Println("Operation took", dur)
 
 	UIMutex.Unlock()
 
@@ -677,6 +683,8 @@ func PutRequest(filenames []string, pipelined bool) {
 
 func PutFiles(filenames []string) {
 
+	timeStart := time.Now()
+
 	switch TxMode {
 	case kTXModeSingle:
 		for i := 0; i < len(filenames); i++ {
@@ -699,6 +707,9 @@ func PutFiles(filenames []string) {
 		go PutRequest(filenames, TxMode == kTXModePipelined)
 		NetWorkerWG.Wait()
 	}
+
+	dur := time.Since(timeStart)
+	fmt.Println("Operation took", dur)
 
 	UIMutex.Unlock()
 
