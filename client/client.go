@@ -901,7 +901,9 @@ func main() {
 
 			fileIndex := GetIndex()
 			for i := 0; i < len(fileIndex); i++ {
-				fmt.Println(fileIndex[i])
+				if(fileIndex[i] != "") {
+					fmt.Println(fileIndex[i])
+				}
 			}
 
 			UIMutex.Unlock()
