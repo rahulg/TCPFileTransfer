@@ -550,7 +550,7 @@ func GetFiles(filenames []string) {
 	}
 
 	dur := time.Since(timeStart)
-	fmt.Println("Operation took", dur)
+	fmt.Println("Took", dur, "to get files.")
 
 	UIMutex.Unlock()
 
@@ -711,7 +711,7 @@ func PutFiles(filenames []string) {
 	}
 
 	dur := time.Since(timeStart)
-	fmt.Println("Operation took", dur)
+	fmt.Println("Took", dur, "to put files.")
 
 	UIMutex.Unlock()
 
