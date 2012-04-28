@@ -48,7 +48,7 @@ func InitFlags() {
 	flag.StringVar(&Host, "host", "localhost", "Hostname or IP address to connect to.")
 	flag.StringVar(&Port, "port", "65500", "Port to connect to. May be specified as a number or protocol identifier.")
 	flag.StringVar(&TestMode, "run", "interactive", "Non-interactive mode: single, parallel, persistent or pipelined. Other values will run an interactive shell.")
-	flag.IntVar(&MaxParallel, "maxconn", 65535, "The maximum number of connections in parallel mode.")
+	flag.IntVar(&MaxParallel, "climit", 65535, "The maximum number of connections in parallel mode.")
 	flag.Parse()
 }
 
@@ -73,7 +73,7 @@ func ParseGetResponse(filename string, reader *bufio.Reader) {
 		input := strings.Split(toParse, " ")
 		temp = make([]string, 0)
 
-		switch input[0] {
+		switch strings.ToUpper(input[0]) {
 
 		case "REQERR":
 
@@ -131,7 +131,7 @@ func ParseGetResponse(filename string, reader *bufio.Reader) {
 		input := strings.Split(toParse, " ")
 		temp = make([]string, 0)
 
-		switch input[0] {
+		switch strings.ToUpper(input[0]) {
 
 		case "LENGTH":
 
@@ -228,7 +228,7 @@ func ParseGetResponse(filename string, reader *bufio.Reader) {
 
 		var inputChecksum string
 
-		if input[0] == "CHECKSUM" {
+		if strings.ToUpper(input[0]) == "CHECKSUM" {
 
 			if len(input) < 2 {
 
@@ -346,7 +346,7 @@ func GetIndex() (filenames []string) {
 		input := strings.Split(toParse, " ")
 		temp = make([]string, 0)
 
-		switch input[0] {
+		switch strings.ToUpper(input[0]) {
 
 		case "NOTFOUND":
 
@@ -390,7 +390,7 @@ func GetIndex() (filenames []string) {
 		input := strings.Split(toParse, " ")
 		temp = make([]string, 0)
 
-		switch input[0] {
+		switch strings.ToUpper(input[0]) {
 
 		case "LENGTH":
 
@@ -480,7 +480,7 @@ func GetIndex() (filenames []string) {
 
 		var inputChecksum string
 
-		if input[0] == "CHECKSUM" {
+		if strings.ToUpper(input[0]) == "CHECKSUM" {
 
 			if len(input) < 2 {
 
@@ -648,9 +648,9 @@ func PutRequest(filenames []string, pipelined bool) {
 			toParse := string(line)
 			input := strings.Split(toParse, " ")
 
-			if input[0] == "RECV" {
+			if strings.ToUpper(input[0]) == "RECV" {
 				fmt.Println("Sent file", input[1]+".")
-			} else if input[1] == "WRERR" {
+			} else if strings.ToUpper(input[0]) == "WRERR" {
 				fmt.Println("Failed to write file", input[1]+".")
 			}
 
@@ -676,9 +676,9 @@ func PutRequest(filenames []string, pipelined bool) {
 			toParse := string(line)
 			input := strings.Split(toParse, " ")
 
-			if input[0] == "RECV" {
+			if strings.ToUpper(input[0]) == "RECV" {
 				fmt.Println("Sent file", input[1]+".")
-			} else if input[1] == "WRERR" {
+			} else if strings.ToUpper(input[0]) == "WRERR" {
 				fmt.Println("Failed to write file", input[1]+".")
 			}
 
@@ -819,7 +819,7 @@ func main() {
 		input := strings.Split(toParse, " ")
 		temp = make([]string, 256)
 
-		switch strings.TrimSpace(input[0]) {
+		switch strings.ToLower(strings.TrimSpace(input[0])) {
 		case "host":
 
 			if len(input) == 2 && input[1] != "" {
@@ -870,7 +870,7 @@ func main() {
 
 			} else if len(input) == 2 {
 
-				switch input[1] {
+				switch strings.ToLower(input[1]) {
 
 				case "single":
 					fmt.Println("Mode:", TXModeStrings[TxMode], "=> single")
