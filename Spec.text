@@ -85,9 +85,9 @@ BYE
 
 Response:
 
-OK <fname>
-OK <fname2>
-OK <fname3>
+RECV <fname>
+RECV <fname2>
+RECV <fname3>
 
 
 =====================
