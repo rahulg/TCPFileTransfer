@@ -68,7 +68,7 @@ func ClientHandler(connx *net.TCPConn) {
 			input := strings.Split(toParse, " ")
 			temp = make([]string, 0)
 
-			switch input[0] {
+			switch strings.ToUpper(input[0]) {
 
 			case "BYE":
 
@@ -116,6 +116,8 @@ func ClientHandler(connx *net.TCPConn) {
 					}
 
 				}
+
+				filename = strings.Replace(filename, "../", "", -1)
 
 				filenames = append(filenames, filename)
 				leanState = kStateGetMode
@@ -210,7 +212,7 @@ func ClientHandler(connx *net.TCPConn) {
 					}
 
 					fmt.Println("[", connx.RemoteAddr(), "] Sent", totalSize, "bytes for index")
-					writer.WriteString("\n\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
+					writer.WriteString("\nCHECKSUM " + fmt.Sprintf("%x", checksum.Sum(make([]byte, 0))) + "\n\n")
 					writer.Flush()
 
 				} else {
@@ -281,7 +283,7 @@ func ClientHandler(connx *net.TCPConn) {
 			input := strings.Split(toParse, " ")
 			temp = make([]string, 0)
 
-			if input[0] == "LENGTH" {
+			if strings.ToUpper(input[0]) == "LENGTH" {
 				if len(input) < 2 {
 					fmt.Println("[", connx.RemoteAddr(), "] Error in header field \"LENGTH\"")
 					continue
@@ -363,7 +365,7 @@ func ClientHandler(connx *net.TCPConn) {
 				temp = make([]string, 0)
 
 				var inputChecksum string
-				if input[0] == "CHECKSUM" && len(input) > 1 {
+				if strings.ToUpper(input[0]) == "CHECKSUM" && len(input) > 1 {
 					inputChecksum = input[1]
 				} else {
 					continue
